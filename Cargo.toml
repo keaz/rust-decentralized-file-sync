@@ -1,0 +1,7 @@
+[workspace]
+
+members = [
+    "file-sync-core",
+    "rendezvous-server",
+    "rendezvous-client",
+]
