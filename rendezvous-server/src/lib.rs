@@ -1,4 +1,4 @@
-use std::{net::TcpListener, thread, sync::{Arc, Mutex}};
+use std::{net::{TcpListener, TcpStream, SocketAddr}, thread, sync::{Arc, Mutex}};
 use uuid::Uuid;
 
 use file_sync_core::client::Client;
@@ -25,11 +25,10 @@ impl Server {
         let _handler = thread::spawn(move|| loop {
             if *running.lock().unwrap() {
                 match listener.accept()   {
-                    Ok((socket, addr)) => {
-                        println!("new client: {addr:?}");
-                        let id = Uuid::new_v4().to_string();
+                    Ok((socket, address)) => {
+                        println!("new client: {address:?}");
                         let clients = &mut *clients.lock().unwrap();
-                        clients.push(Client { id, stream: socket, addr });
+                        clients.push(handle_connection(socket, address));
                     },
                     Err(e) => {
                         println!("couldn't get client: {e:?}")
@@ -51,6 +50,15 @@ impl Server {
         *running = false;
     }
 }
+
+
+fn handle_connection(socket: TcpStream, address: SocketAddr)-> Client{
+    let id = Uuid::new_v4().to_string();
+    let mut client = Client { id, stream: socket, address };
+    client.send_message("HTTP/1.1 201 OK\r\n\r\n");
+    client
+}
+
 
 mod tests {
     use super::*;
