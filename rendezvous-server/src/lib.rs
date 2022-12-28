@@ -2,6 +2,7 @@ use std::{sync::{Arc}, collections::{HashMap, hash_map::Entry}, borrow::BorrowMu
 use async_std::{prelude::*,net::{TcpStream, ToSocketAddrs, TcpListener}, task, io::BufReader,};
 use futures::{channel::mpsc, select, SinkExt, FutureExt};
 use serde::{Deserialize, Serialize};
+use file_sync_core::client::ClientJoinedEvent;
 
 
 use log::{info,debug,warn};
@@ -23,12 +24,6 @@ enum Event {
         shutdown: Receiver<Void>,
     },
 
-}
-
-#[derive(Serialize, Deserialize,Debug)]
-struct NewPeer {
-    id: String,
-    port: i32,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -85,20 +80,20 @@ async fn broker_loop(events: Receiver<Event>) {
                     Entry::Occupied(..) => (),
                     Entry::Vacant(entry) => {
                         let (_client_sender, mut client_receiver) = mpsc::unbounded();
-                        entry.insert(Peer { id: id.clone(), address: address, port: port});
-                        
-                        let mut disconnect_sender = disconnect_sender.clone();
+                        entry.insert(Peer { id: id.clone(), address, port});
                         let peers_to_be_sent:Vec<&Peer> =  peers.values().map(|peer| peer).collect();
-                        let json = match serde_json::to_string(&peers_to_be_sent) {
+                        let peers_json = match serde_json::to_string(&peers_to_be_sent) {
                             Err(..) => String::new(),
                             Ok(json) => json,
                         };
+                        let _rs = (&*stream).write_all(peers_json.as_bytes()).await;
+                        let _rs = (&*stream).write_all(b"\n").await;
+                        let mut disconnect_sender = disconnect_sender.clone();
+
                         spawn_and_log_error(async move {
-                            (&*stream).write_all(json.as_bytes()).await?;
 
                             let res = connection_writer_loop(&mut client_receiver, stream, shutdown).await;
-                            disconnect_sender.send((id, client_receiver)).await // 4
-                                .unwrap();
+                            disconnect_sender.send((id, client_receiver)).await.unwrap();
                             res
                         });
                     }
@@ -148,7 +143,7 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
         Ok(address) => address.ip().to_string(),
     };
 
-    let new_peer: NewPeer = match serde_json::from_str(&message) {
+    let new_peer: ClientJoinedEvent = match serde_json::from_str(&message) {
         Err(err) => Err(err)?,
         Ok(message) => message,
     };
@@ -158,13 +153,22 @@ async fn connection_loop(mut broker: Sender<Event>, stream: TcpStream) -> Result
     let (_shutdown_sender, shutdown_receiver) = mpsc::unbounded::<Void>();
     broker.send(Event::NewPeer { id: new_peer.id, address: addr,port: new_peer.port , stream: Arc::clone(&stream), shutdown: shutdown_receiver }).await .unwrap();
 
+    let error_threshold = 10;
+    let mut error_count = 0;
     while let Some(line) = lines.next().await {
         let message = match line {
-            Err(..) => {
-                warn!("Error reading line from {:?}",&peer_id);
+            Err(err) => {
+                warn!("Error {:?} reading line from {:?}",err,&peer_id);
+                error_count += 1;
+                if error_count == error_threshold {
+                    Err("Client error count reached the threshold")?
+                }
                 continue
             },
-            Ok(message) => message,
+            Ok(message) => {
+                error_count = 0;
+                message
+            },
         };
     }
     // while let Some(line) = lines.next().await {
