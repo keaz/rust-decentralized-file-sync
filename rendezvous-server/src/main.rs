@@ -1,6 +1,6 @@
 use std::{env, fs};
 use async_std::task;
-use rendezvous_server::accept_loop;
+use rendezvous_server::server::accept_loop;
 
 
 fn main() {
