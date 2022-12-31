@@ -4,8 +4,6 @@ pub mod server {
     use async_std::{io::BufReader, net::{TcpListener, TcpStream, ToSocketAddrs}, prelude::*, task};
     use futures::{channel::mpsc, FutureExt, select, SinkExt};
     use log::{debug, info, warn};
-    #[cfg(test)]
-    use mockall::{automock, mock, predicate::*};
 
     use file_sync_core::{Result, spawn_and_log_error};
     use file_sync_core::client::{ClientCommand, ClientEvent, ConnectedPeer, Peer};
@@ -48,7 +46,7 @@ pub mod server {
     }
 
     async fn broker_loop(events: Receiver<Event>) {
-        let (disconnect_sender, mut disconnect_receiver) = mpsc::unbounded::<(String, Receiver<String>)>();
+        let (disconnect_sender, mut disconnect_receiver) = mpsc::unbounded::<(String, Receiver<ClientEvent>)>();
         let mut peers: HashMap<String, Peer> = HashMap::new();
         let mut events = events.fuse();
         loop {
@@ -64,7 +62,11 @@ pub mod server {
                             warn!("Client already left client_id::{}",id)
                         },
                         Some(peer) => {
-                            info!("Client is leaving client_id::{}",peer.peer_id);
+                            info!("Client is leaving client_id::{}",&peer.peer_id);
+                            for peer in peers.values() {
+                                let left_event = ClientEvent::ClientLeft { id: id.clone(), client_id: String::from(peer.peer_id.clone())};
+                                peer.sender.clone().send(left_event).await.unwrap();
+                            }
                             drop(peer);
                         }
                     }
@@ -79,19 +81,22 @@ pub mod server {
                         },
                         Some(peer) => {
                             info!("Client is leaving client_id::{}",peer.peer_id);
-                            let left_event = get_left_event(id,&client_id);
-                            //TOD
-                            // send_message(Arc::clone(&peer), left_event).await;
+                            for peer in peers.values() {
+                                let left_event = ClientEvent::ClientLeft { id: id.clone(), client_id: String::from(client_id.clone())};
+                                peer.sender.clone().send(left_event).await.unwrap();
+                            }
+                            
                             drop(peer);
                         }
                     }
                 }
                 Event::NewClient { id, client_id, address, port, stream, shutdown } => {
-                    match peers.entry(id.clone()) {
+                    match peers.entry(client_id.clone()) {
                         Entry::Occupied(..) => (),
                         Entry::Vacant(entry) => {
                             let (client_sender, mut client_receiver) = mpsc::unbounded();
                             entry.insert(Peer { peer_id: client_id.clone(), address, port, sender: client_sender });
+                            
                             let peers_to_be_sent = peers.values()
                                 .filter(|peer| !peer.peer_id.eq(&client_id))
                                 .map(|peer| ConnectedPeer { peer_id: peer.peer_id.clone(), address: peer.address.clone(), port: peer.port })
@@ -124,14 +129,6 @@ pub mod server {
         let _rs = (&*stream).write_all(b"\n").await;
     }
 
-    fn get_left_event(id: String, client_id: &str) -> String {
-        let client_connected_event = ClientEvent::ClientLeft { id, client_id: String::from(client_id)};
-        match serde_json::to_string(&client_connected_event) {
-            Err(..) => String::new(),
-            Ok(json) => json,
-        }
-    }
-
     fn get_connected_event(id: String, client_id: &str, peers_to_be_sent: Vec<ConnectedPeer>) -> (ClientEvent, String) {
         let client_connected_event = ClientEvent::ClientConnected { id, client_id: String::from(client_id), peers: peers_to_be_sent };
         let peers_json = match serde_json::to_string(&client_connected_event) {
@@ -141,14 +138,25 @@ pub mod server {
         (client_connected_event, peers_json)
     }
 
-    async fn connection_writer_loop(messages: &mut Receiver<String>, stream: Arc<TcpStream>, shutdown: Receiver<Void>) -> Result<()> {
+    async fn connection_writer_loop(messages: &mut Receiver<ClientEvent>, stream: Arc<TcpStream>, shutdown: Receiver<Void>) -> Result<()> {
         let mut stream = &*stream;
         let mut messages = messages.fuse();
         let mut shutdown = shutdown.fuse();
         loop {
             select! {
                 msg = messages.next().fuse() => match msg {
-                    Some(msg) => stream.write_all(msg.as_bytes()).await?,
+                    Some(msg) => {
+                        match serde_json::to_string(&msg) {
+                            Err(..) => {
+                                warn!("Failed to convert {:?} to JSON",msg);
+                            },
+                            Ok(json_event) => {
+                                stream.write_all(json_event.as_bytes()).await;
+                                stream.write_all(b"\n").await;
+                                debug!("Succesfilly sent event to peer");
+                            }
+                        }
+                    },
                     None => break,
                 },
                 void = shutdown.next().fuse() => match void {
@@ -215,12 +223,12 @@ pub mod server {
                 }
             }
 
-            let (dest, msg) = match line.find(':') {
-                None => continue,
-                Some(idx) => (&line[..idx], line[idx + 1..].trim()),
-            };
-            let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
-            let msg: String = msg.to_string();
+            // let (dest, msg) = match line.find(':') {
+            //     None => continue,
+            //     Some(idx) => (&line[..idx], line[idx + 1..].trim()),
+            // };
+            // let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
+            // let msg: String = msg.to_string();
 
         }
         Ok(())
@@ -239,27 +247,5 @@ pub mod server {
             }
         };
         Ok((id, client_id, port))
-    }
-}
-
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn connection_loop() {
-        // let server = Server::bind(String::from("127.0.0.1:7878"));
-
-        // assert_eq!(server.clients.lock().unwrap().len(),0);
-        // assert_eq!(*server.running.lock().unwrap(),true);
-    }
-
-    #[test]
-    fn server_stop() {
-        // let mut server = Server::bind(String::from("127.0.0.1:7878"));
-        // server.stop();
-        // assert_eq!(server.clients.lock().unwrap().len(),0);
-        // assert_eq!(*server.running.lock().unwrap(),false);
     }
 }

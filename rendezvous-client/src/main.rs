@@ -4,7 +4,7 @@ use rendezvous_client::run;
 
 
 fn main() {
-    log4rs::init_file("log4rs.yaml", Default::default()).unwrap();
+    // log4rs::init_file("config/log4rs.yaml", Default::default()).unwrap();
     let start = SystemTime::now();
     let since_the_epoch = start.duration_since(UNIX_EPOCH).expect("Time went backwards");
 

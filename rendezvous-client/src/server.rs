@@ -16,7 +16,7 @@ use file_sync_core::client::{ClientCommand, ConnectedPeer, Peer};
 
 type Sender<T> = mpsc::UnboundedSender<T>;
 
-pub async fn server_connection_loop(addr: impl ToSocketAddrs, client_id: String, mut peer_sender: Sender<ConnectedPeer>) -> Result<()> {
+pub async fn server_connection_loop(addr: impl ToSocketAddrs, client_id: String, mut peer_sender: Sender<ClientEvent>) -> Result<()> {
     let stream = TcpStream::connect(addr).await?;
     let join_client_command = ClientCommand::ConnectClient { id: Uuid::new_v4().to_string(), client_id: client_id.clone(), port: 7890 };
     let event_json = serde_json::to_string(&join_client_command)?;
@@ -33,22 +33,18 @@ pub async fn server_connection_loop(addr: impl ToSocketAddrs, client_id: String,
                     let line = line?;
                     debug!("{}", line);
                     match serde_json::from_str(&line) {
-                        Err(err) => Err(err)?,
+                        Err(..) => {
+                            warn!("Error converting JSON to ClientEvent");
+                        }
                         Ok(message) => {
-                            match message {
-                                ClientEvent::ClientConnected{ id: _,client_id: _,peers} => {
-                                    for peer in peers {
-                                        if peer.peer_id.eq(&client_id) {
-                                            continue;
-                                        }
-                                        peer_sender.send(peer).await.unwrap();
-                                    }
+                            match peer_sender.send(message).await {
+                                Err(err) => {
+                                    warn!("Failed to send message {:?}",err);
                                 },
-                                ClientEvent::ClientLeft{id,client_id} => {
-                                    info!("Client left id::{} client_id::{}",id,client_id);
+                                Ok(..) => {
+                                    debug!("Successfully sent event to client");
                                 }
-                                _ => Err("Wrong ClientEvent event")?,
-                            }
+                            };
                         },
                     };
 
