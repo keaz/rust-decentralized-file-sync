@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use async_std::task;
 use futures::channel::mpsc;
 use futures::StreamExt;
-use log::{info, warn};
+use log::{info};
 use file_sync_core::{Result};
 use file_sync_core::client::{ClientEvent, ConnectedPeer};
 

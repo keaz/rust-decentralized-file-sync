@@ -151,8 +151,8 @@ pub mod server {
                                 warn!("Failed to convert {:?} to JSON",msg);
                             },
                             Ok(json_event) => {
-                                stream.write_all(json_event.as_bytes()).await;
-                                stream.write_all(b"\n").await;
+                                stream.write_all(json_event.as_bytes()).await?;
+                                stream.write_all(b"\n").await?;
                                 debug!("Succesfilly sent event to peer");
                             }
                         }

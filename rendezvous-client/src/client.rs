@@ -55,6 +55,7 @@ pub async fn server_connection_loop(addr: impl ToSocketAddrs, client_id: String,
                     let line = line?;
                     if line.eq("EXIT") {
                         send_exit_event(client_id.clone(), stream.clone()).await?;
+                        break;
                     }
                 }
                 None => break,
