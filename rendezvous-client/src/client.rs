@@ -1,41 +1,82 @@
-use std::collections::HashMap;
+extern crate async_std;
+extern crate futures;
 
-use async_std::task;
+use async_std::{
+    io::{BufReader, stdin},
+    net::{TcpStream, ToSocketAddrs},
+    prelude::*,
+};
+use futures::{FutureExt, select, SinkExt};
 use futures::channel::mpsc;
-use futures::StreamExt;
-use log::{info, warn};
-use file_sync_core::{Result};
-use file_sync_core::client::{ClientEvent, ConnectedPeer};
+use log::{debug, info, warn};
+use uuid::Uuid;
 
-type Receiver<T> = mpsc::UnboundedReceiver<T>;
+use file_sync_core::{client::ClientEvent, Result};
+use file_sync_core::client::{ClientCommand};
 
-pub async fn peer_loop(peer_receiver: Receiver<ClientEvent>) -> Result<()>{
+type Sender<T> = mpsc::UnboundedSender<T>;
 
-    let peers_holder: HashMap<String, ConnectedPeer> = HashMap::new();
+pub async fn server_connection_loop(addr: impl ToSocketAddrs, client_id: String, mut peer_sender: Sender<ClientEvent>) -> Result<()> {
+    let stream = TcpStream::connect(addr).await?;
+    let join_client_command = ClientCommand::ConnectClient { id: Uuid::new_v4().to_string(), client_id: client_id.clone(), port: 7890 };
+    let event_json = serde_json::to_string(&join_client_command)?;
 
-    info!("Peer loop started");
-    let peer_receiver_handler = task::spawn(peer_receiver_loop(peer_receiver,peers_holder));
+    let (reader, mut writer) = (&stream, &stream); // 1
+    send_event(event_json, &mut writer).await?;
 
-    peer_receiver_handler.await;
+    let mut lines_from_server = BufReader::new(reader).lines().fuse();
+    let mut lines_from_stdin = BufReader::new(stdin()).lines().fuse();
+    loop {
+        select! {
+            line = lines_from_server.next().fuse() => match line {
+                Some(line) => {
+                    let line = line?;
+                    debug!("{}", line);
+                    match serde_json::from_str(&line) {
+                        Err(..) => {
+                            warn!("Error converting JSON to ClientEvent");
+                        }
+                        Ok(message) => {
+                            match peer_sender.send(message).await {
+                                Err(err) => {
+                                    warn!("Failed to send message {:?}",err);
+                                },
+                                Ok(..) => {
+                                    debug!("Successfully sent event to client");
+                                }
+                            };
+                        },
+                    };
+                },
+                None => break,
+            },
+            line = lines_from_stdin.next().fuse() => match line {
+                Some(line) => {
+                    let line = line?;
+                    if line.eq("EXIT") {
+                        send_exit_event(client_id.clone(), stream.clone()).await?;
+                    }
+                }
+                None => break,
+            }
+        }
+    }
     Ok(())
 }
 
-async fn peer_receiver_loop(mut peer_receiver: Receiver<ClientEvent>,mut peers_holder: HashMap<String, ConnectedPeer>) {
-    loop {
-        let client_event  = match peer_receiver.next().await {
-            None => break,
-            Some(new_peer) => new_peer,
-        };
-        match client_event {
-            ClientEvent::ClientConnected{ id: _,client_id:_,peers} => {
-                for peer in peers {
-                    peers_holder.insert(peer.peer_id.clone(), peer);
-                }
-            },
-            ClientEvent::ClientLeft{id,client_id} => {
-                peers_holder.remove(&client_id);
-                info!("Client removed id::{} client_id::{}",id,client_id);
-            },
-        }
-    }
+
+async fn send_exit_event(client_id: String,stream:TcpStream ) -> Result<()> {
+    let id = Uuid::new_v4();
+    let leave_command = ClientCommand::LeaveClient{id: id.to_string(), client_id: client_id.clone()};
+    let event_json = serde_json::to_string(&leave_command)?;
+
+    send_event(event_json, &mut &stream).await?;
+    info!("Sent exit event id::{}",id);
+    Ok(())
+}
+
+async fn send_event(event_json: String, writer: &mut &TcpStream) -> Result<()> {
+    writer.write_all(event_json.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    Ok(())
 }
