@@ -6,7 +6,7 @@ pub mod server {
     use log::{debug, info, warn};
 
     use file_sync_core::{Result, spawn_and_log_error};
-    use file_sync_core::client::{ClientCommand, ClientEvent, ConnectedPeer, Peer};
+    use file_sync_core::client::{ClientCommand, ClientEvent, ConnectedPeer,Client};
 
     type Sender<T> = mpsc::UnboundedSender<T>;
     type Receiver<T> = mpsc::UnboundedReceiver<T>;
@@ -47,7 +47,7 @@ pub mod server {
 
     async fn broker_loop(events: Receiver<Event>) {
         let (disconnect_sender, mut disconnect_receiver) = mpsc::unbounded::<(String, Receiver<ClientEvent>)>();
-        let mut peers: HashMap<String, Peer> = HashMap::new();
+        let mut peers: HashMap<String, Client> = HashMap::new();
         let mut events = events.fuse();
         loop {
             let event = select! {
@@ -95,7 +95,7 @@ pub mod server {
                         Entry::Occupied(..) => (),
                         Entry::Vacant(entry) => {
                             let (client_sender, mut client_receiver) = mpsc::unbounded();
-                            entry.insert(Peer { peer_id: client_id.clone(), address, port, sender: client_sender });
+                            entry.insert(Client { peer_id: client_id.clone(), address, port, sender: client_sender });
                             
                             let peers_to_be_sent = peers.values()
                                 .filter(|peer| !peer.peer_id.eq(&client_id))
@@ -222,14 +222,6 @@ pub mod server {
                     }
                 }
             }
-
-            // let (dest, msg) = match line.find(':') {
-            //     None => continue,
-            //     Some(idx) => (&line[..idx], line[idx + 1..].trim()),
-            // };
-            // let dest: Vec<String> = dest.split(',').map(|name| name.trim().to_string()).collect();
-            // let msg: String = msg.to_string();
-
         }
         Ok(())
     }

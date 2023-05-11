@@ -12,7 +12,7 @@ use log::{debug, info, warn};
 use uuid::Uuid;
 
 use file_sync_core::{client::ClientEvent, Result};
-use file_sync_core::client::{ClientCommand};
+use file_sync_core::client::ClientCommand;
 
 type Sender<T> = mpsc::UnboundedSender<T>;
 
@@ -21,7 +21,7 @@ pub async fn server_connection_loop(addr: impl ToSocketAddrs, client_id: String,
     let join_client_command = ClientCommand::ConnectClient { id: Uuid::new_v4().to_string(), client_id: client_id.clone(), port: 7890 };
     let event_json = serde_json::to_string(&join_client_command)?;
 
-    let (reader, mut writer) = (&stream, &stream); // 1
+    let (reader, mut writer) = (&stream, &stream); 
     send_event(event_json, &mut writer).await?;
 
     let mut lines_from_server = BufReader::new(reader).lines().fuse();

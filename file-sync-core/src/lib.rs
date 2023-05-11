@@ -7,13 +7,13 @@ pub mod client {
     use serde::{Deserialize, Serialize};
     type Sender<T> = mpsc::UnboundedSender<T>;
 
-    pub struct Peer {
+    pub struct Client {
         pub peer_id: String,
         pub address: String,
         pub port: i32,
         pub sender: Sender<ClientEvent>,
     }
-
+    
     #[derive(Serialize, Deserialize,Debug)]
     pub struct ConnectedPeer{
         pub peer_id: String,
